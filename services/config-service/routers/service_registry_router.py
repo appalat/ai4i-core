@@ -17,11 +17,8 @@ from models.service_registry_models import (
 from repositories.service_registry_repository import ServiceRegistryRepository
 from middleware.auth_provider import AuthProvider, require_admin_permissions
 
-# Create router with the new prefix
+# Create router
 service_registry_router = APIRouter(prefix="/api/v1/registry", tags=["service-registry"])
-
-# Create compatibility router for old path
-service_registry_compat_router = APIRouter(prefix="/api/v1/services", tags=["service-registry"])
 
 
 async def get_db_session():
@@ -46,7 +43,7 @@ async def get_service_registry_service(db: AsyncSession = Depends(get_db_session
     return ServiceRegistryService(repository, cache_service, redis_client, notification_service)
 
 
-# Define endpoint functions (will be registered with multiple routers)
+# Define endpoint functions
 async def register_service(
     request: ServiceRegistrationRequest,
     service: ServiceRegistryService = Depends(get_service_registry_service),
@@ -55,7 +52,19 @@ async def register_service(
     """Register a new service or update existing service."""
     try:
         registered_service = await service.register_service(request)
-        return ServiceInfo.model_validate(registered_service)
+        # Convert ORM object to dict for Pydantic validation
+        service_dict = {
+            "id": registered_service.id,
+            "service_name": registered_service.service_name,
+            "service_url": registered_service.service_url,
+            "health_check_url": registered_service.health_check_url,
+            "status": registered_service.status,
+            "last_health_check": registered_service.last_health_check,
+            "metadata": service._convert_metadata(registered_service.service_metadata),
+            "registered_at": registered_service.registered_at,
+            "updated_at": registered_service.updated_at
+        }
+        return ServiceInfo.model_validate(service_dict)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -89,13 +98,10 @@ async def list_services(
     try:
         services = await service_registry.get_all_services(status)
         
-        # Convert to response models
+        # Convert to response models (services are already dicts from service layer)
         service_responses = []
         for service in services:
-            if isinstance(service, dict):
-                service_responses.append(ServiceInfo.model_validate(service))
-            else:
-                service_responses.append(ServiceInfo.model_validate(service))
+            service_responses.append(ServiceInfo.model_validate(service))
         
         return ServiceListResponse(
             services=service_responses,
@@ -115,10 +121,8 @@ async def get_healthy_services(
         # Convert to response models
         service_responses = []
         for service in services:
-            if isinstance(service, dict):
-                service_responses.append(ServiceInfo.model_validate(service))
-            else:
-                service_responses.append(ServiceInfo.model_validate(service))
+            # Services are already dicts from service layer
+            service_responses.append(ServiceInfo.model_validate(service))
         
         return ServiceDiscoveryResponse(
             services=service_responses,
@@ -143,11 +147,8 @@ async def update_service_health(
         if not service:
             raise HTTPException(status_code=404, detail="Service not found")
         
-        # Handle cached dict vs ORM object
-        if isinstance(service, dict):
-            return ServiceInfo.model_validate(service)
-        else:
-            return ServiceInfo.model_validate(service)
+        # Service is already a dict from service layer
+        return ServiceInfo.model_validate(service)
     except HTTPException:
         raise
     except Exception as e:
@@ -171,18 +172,11 @@ async def deregister_service(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Register endpoints with main router (new path /api/v1/registry)
+# Register endpoints
+# Order matters: specific routes must come before parameterized routes
 service_registry_router.add_api_route("/register", register_service, methods=["POST"], response_model=ServiceInfo)
-service_registry_router.add_api_route("/{service_name}", get_service, methods=["GET"], response_model=ServiceInfo)
-service_registry_router.add_api_route("/", list_services, methods=["GET"], response_model=ServiceListResponse)
 service_registry_router.add_api_route("/healthy", get_healthy_services, methods=["GET"], response_model=ServiceDiscoveryResponse)
 service_registry_router.add_api_route("/health", update_service_health, methods=["PUT"], response_model=ServiceInfo)
+service_registry_router.add_api_route("/", list_services, methods=["GET"], response_model=ServiceListResponse)
+service_registry_router.add_api_route("/{service_name}", get_service, methods=["GET"], response_model=ServiceInfo)
 service_registry_router.add_api_route("/{service_name}", deregister_service, methods=["DELETE"])
-
-# Register same endpoints with compatibility router (old path /api/v1/services)
-service_registry_compat_router.add_api_route("/register", register_service, methods=["POST"], response_model=ServiceInfo)
-service_registry_compat_router.add_api_route("/{service_name}", get_service, methods=["GET"], response_model=ServiceInfo)
-service_registry_compat_router.add_api_route("/", list_services, methods=["GET"], response_model=ServiceListResponse)
-service_registry_compat_router.add_api_route("/healthy", get_healthy_services, methods=["GET"], response_model=ServiceDiscoveryResponse)
-service_registry_compat_router.add_api_route("/health", update_service_health, methods=["PUT"], response_model=ServiceInfo)
-service_registry_compat_router.add_api_route("/{service_name}", deregister_service, methods=["DELETE"])

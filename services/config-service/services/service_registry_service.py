@@ -23,6 +23,18 @@ class ServiceRegistryService:
         self.redis_client = redis_client
         self.notification_service = notification_service
     
+    def _convert_metadata(self, metadata) -> Optional[Dict[str, Any]]:
+        """Convert metadata to dict or None, handling SQLAlchemy types."""
+        if metadata is None:
+            return None
+        if isinstance(metadata, dict):
+            return metadata
+        # Handle SQLAlchemy types or other cases
+        try:
+            return dict(metadata) if metadata else None
+        except (TypeError, ValueError):
+            return None
+    
     async def register_service(self, request: ServiceRegistrationRequest) -> ServiceRegistryDB:
         """Register or update service in DB and Redis."""
         try:
@@ -37,7 +49,7 @@ class ServiceRegistryService:
                 "health_check_url": service.health_check_url,
                 "status": service.status,
                 "last_health_check": service.last_health_check.isoformat() if service.last_health_check else None,
-                "metadata": service.service_metadata,
+                "metadata": self._convert_metadata(service.service_metadata),
                 "registered_at": service.registered_at.isoformat(),
                 "updated_at": service.updated_at.isoformat()
             }
@@ -84,7 +96,7 @@ class ServiceRegistryService:
                     "health_check_url": service.health_check_url,
                     "status": service.status,
                     "last_health_check": service.last_health_check.isoformat() if service.last_health_check else None,
-                    "metadata": service.service_metadata,
+                    "metadata": self._convert_metadata(service.service_metadata),
                     "registered_at": service.registered_at.isoformat(),
                     "updated_at": service.updated_at.isoformat()
                 }
@@ -97,10 +109,26 @@ class ServiceRegistryService:
             logger.error(f"Failed to get service: {e}")
             raise
     
-    async def get_all_services(self, status_filter: Optional[str] = None) -> List[ServiceRegistryDB]:
+    async def get_all_services(self, status_filter: Optional[str] = None) -> List[dict]:
         """List all services."""
         try:
-            return await self.repository.get_all(status_filter)
+            services = await self.repository.get_all(status_filter)
+            # Convert ORM objects to dicts for consistent response
+            service_dicts = []
+            for service in services:
+                service_dict = {
+                    "id": service.id,
+                    "service_name": service.service_name,
+                    "service_url": service.service_url,
+                    "health_check_url": service.health_check_url,
+                    "status": service.status,
+                    "last_health_check": service.last_health_check.isoformat() if service.last_health_check else None,
+                    "metadata": self._convert_metadata(service.service_metadata),
+                    "registered_at": service.registered_at.isoformat(),
+                    "updated_at": service.updated_at.isoformat()
+                }
+                service_dicts.append(service_dict)
+            return service_dicts
         except Exception as e:
             logger.error(f"Failed to get all services: {e}")
             raise
@@ -123,7 +151,7 @@ class ServiceRegistryService:
                     "health_check_url": service.health_check_url,
                     "status": service.status,
                     "last_health_check": service.last_health_check.isoformat() if service.last_health_check else None,
-                    "metadata": service.service_metadata,
+                    "metadata": self._convert_metadata(service.service_metadata),
                     "registered_at": service.registered_at.isoformat(),
                     "updated_at": service.updated_at.isoformat()
                 }
@@ -148,7 +176,7 @@ class ServiceRegistryService:
                     "health_check_url": service.health_check_url,
                     "status": service.status,
                     "last_health_check": service.last_health_check.isoformat() if service.last_health_check else None,
-                    "metadata": service.service_metadata,
+                    "metadata": self._convert_metadata(service.service_metadata),
                     "registered_at": service.registered_at.isoformat(),
                     "updated_at": service.updated_at.isoformat()
                 }

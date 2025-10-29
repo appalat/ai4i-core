@@ -7,10 +7,8 @@ Adapted from Ai4V-C health check patterns.
 import logging
 import time
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 from sqlalchemy import text
-
-from main import redis_client, db_engine
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +22,12 @@ health_router = APIRouter(prefix="/api/v1/asr", tags=["Health"])
     summary="Health check endpoint",
     description="Check service health and dependencies"
 )
-async def health_check() -> Dict[str, Any]:
+async def health_check(request: Request) -> Dict[str, Any]:
     """Comprehensive health check for service and dependencies."""
+    # Get connections from app state (initialized in lifespan)
+    redis_client = getattr(request.app.state, "redis_client", None)
+    db_session_factory = getattr(request.app.state, "db_session_factory", None)
+    
     health_status = {
         "status": "healthy",
         "service": "asr-service",
@@ -49,9 +51,9 @@ async def health_check() -> Dict[str, Any]:
     
     # Check PostgreSQL connectivity
     try:
-        if db_engine:
-            async with db_engine.begin() as conn:
-                await conn.execute(text("SELECT 1"))
+        if db_session_factory:
+            async with db_session_factory() as session:
+                await session.execute(text("SELECT 1"))
             health_status["postgres"] = "healthy"
         else:
             health_status["postgres"] = "unavailable"
@@ -88,13 +90,9 @@ async def health_check() -> Dict[str, Any]:
     else:
         health_status["status"] = "unhealthy"
     
-    # Return appropriate status code
-    if health_status["status"] == "unhealthy":
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=health_status
-        )
-    
+    # Always return 200 with status in JSON body for health monitoring
+    # Health monitors check JSON status, not HTTP status code
+    # This allows the service to report its state even when dependencies are down
     return health_status
 
 
@@ -104,8 +102,12 @@ async def health_check() -> Dict[str, Any]:
     summary="Readiness check endpoint",
     description="Check if service is ready to accept requests"
 )
-async def readiness_check() -> Dict[str, Any]:
+async def readiness_check(request: Request) -> Dict[str, Any]:
     """Check if service is ready to accept requests."""
+    # Get connections from app state (initialized in lifespan)
+    redis_client = getattr(request.app.state, "redis_client", None)
+    db_session_factory = getattr(request.app.state, "db_session_factory", None)
+    
     readiness_status = {
         "status": "ready",
         "service": "asr-service",
@@ -116,7 +118,7 @@ async def readiness_check() -> Dict[str, Any]:
     # Check critical dependencies
     try:
         # Check if database is available
-        if not db_engine:
+        if not db_session_factory:
             readiness_status["status"] = "not_ready"
             readiness_status["reason"] = "Database not initialized"
             raise HTTPException(
@@ -134,8 +136,8 @@ async def readiness_check() -> Dict[str, Any]:
             )
         
         # Test database connection
-        async with db_engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
+        async with db_session_factory() as session:
+            await session.execute(text("SELECT 1"))
         
         # Test Redis connection
         await redis_client.ping()

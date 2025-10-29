@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from aiokafka import AIOKafkaProducer
+import httpx
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +22,28 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Configuration Management Service",
     version="1.0.0",
-    description="Centralized configuration and feature flags for microservices"
+    description="Centralized configuration and feature flags for microservices",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    openapi_tags=[
+        {
+            "name": "configurations",
+            "description": "Configuration management endpoints for environment-specific settings"
+        },
+        {
+            "name": "feature-flags",
+            "description": "Feature flag management with rollout percentages and user targeting"
+        },
+        {
+            "name": "service-registry",
+            "description": "Service discovery and health status management"
+        },
+        {
+            "name": "Health",
+            "description": "Service health and readiness checks"
+        }
+    ]
 )
 
 # Add CORS middleware
@@ -40,6 +62,8 @@ db_session_factory = None
 kafka_producer = None
 cache_service = None
 notification_service = None
+health_monitor_service = None
+http_client = None
 
 @app.on_event("startup")
 async def startup_event():
@@ -125,7 +149,26 @@ async def startup_event():
         app.state.cache_service = cache_service
         app.state.notification_service = notification_service
         
-        logger.info("Initialized services")
+        # Initialize HTTP client for health monitoring
+        global http_client
+        http_client = httpx.AsyncClient(timeout=5.0)
+        
+        # Initialize health monitor service
+        global health_monitor_service
+        from services.health_monitor_service import HealthMonitorService
+        
+        health_monitor_service = HealthMonitorService(http_client)
+        
+        # Start health monitoring
+        health_check_interval = int(os.getenv('HEALTH_CHECK_INTERVAL', '30'))
+        health_check_delay = int(os.getenv('HEALTH_CHECK_STARTUP_DELAY', '10'))
+        
+        await health_monitor_service.start_monitoring(
+            interval_seconds=health_check_interval,
+            startup_delay=health_check_delay
+        )
+        
+        logger.info("Initialized services and health monitor")
         
     except Exception as e:
         logger.error(f"Failed to initialize connections: {e}")
@@ -134,7 +177,17 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
-    global redis_client, db_engine, kafka_producer
+    global redis_client, db_engine, kafka_producer, health_monitor_service, http_client
+    
+    # Stop health monitor
+    if health_monitor_service:
+        await health_monitor_service.stop_monitoring()
+        logger.info("Health monitor stopped")
+    
+    # Close HTTP client
+    if http_client:
+        await http_client.aclose()
+        logger.info("HTTP client closed")
     
     if redis_client:
         await redis_client.close()
@@ -221,17 +274,12 @@ async def config_status():
 # Import and register routers
 from routers.config_router import config_router
 from routers.feature_flag_router import feature_flag_router
-from routers.service_registry_router import service_registry_router, service_registry_compat_router
+from routers.service_registry_router import service_registry_router
 
 # Register routers
 app.include_router(config_router)
 app.include_router(feature_flag_router)
-
-# Register service registry router with new path
 app.include_router(service_registry_router)
-
-# Add compatibility alias for service registry at old path
-app.include_router(service_registry_compat_router)
 
 if __name__ == "__main__":
     import uvicorn

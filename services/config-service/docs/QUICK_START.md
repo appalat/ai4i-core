@@ -414,8 +414,10 @@ CONFIG_SERVICE_API_KEY=your-admin-api-key
 ## Need More Details?
 
 - **Full Integration Guide**: See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)
+- **Swagger UI Guide**: See [SWAGGER_GUIDE.md](SWAGGER_GUIDE.md)
+- **Service Registry**: See [SEED_SERVICES_README.md](SEED_SERVICES_README.md)
 - **API Documentation**: See [README.md](README.md)
-- **Example Code**: Check integration patterns in INTEGRATION_GUIDE.md
+- **Example Code**: Check integration patterns in [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)
 
 ## Common Questions
 

@@ -230,7 +230,7 @@ Authorization: ApiKey <api_key>
 
 ### Service Registry
 
-**Prefix**: `/registry` (also available at `/services` for compatibility)
+**Prefix**: `/api/v1/registry`
 
 #### Register Service
 ```http
@@ -733,7 +733,11 @@ See [LICENSE](../../LICENSE) for license information.
 
 ## Related Documentation
 
-- [API Documentation](docs/API_DOCUMENTATION.md)
+- [Swagger UI Guide](docs/SWAGGER_GUIDE.md) - How to access and use Swagger UI for interactive API testing
+- [Quick Start Guide](docs/QUICK_START.md) - Quick setup and usage examples
+- [Integration Guide](docs/INTEGRATION_GUIDE.md) - Detailed integration instructions
+- [Test Results](docs/TEST_RESULTS.md) - API endpoint testing results and fixes
+- [Service Registry Seeding](docs/SEED_SERVICES_README.md) - How to seed service registry data
 - [Architecture Overview](../../docs/ARCHITECTURE.md)
 - [Deployment Guide](../../docs/DEPLOYMENT.md)
 - [Troubleshooting Guide](../../docs/TROUBLESHOOTING.md)
