@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS configurations (
     value TEXT NOT NULL,
     environment VARCHAR(50) NOT NULL,
     service_name VARCHAR(100) NOT NULL,
+    description TEXT,
     is_encrypted BOOLEAN DEFAULT false,
     version INTEGER DEFAULT 1,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -31,6 +32,8 @@ CREATE TABLE IF NOT EXISTS feature_flags (
 );
 
 -- Service registry table
+-- Note: The 'metadata' column name is mapped to 'service_metadata' in SQLAlchemy models
+-- to avoid conflicts with SQLAlchemy's reserved 'metadata' attribute in Declarative API
 CREATE TABLE IF NOT EXISTS service_registry (
     id SERIAL PRIMARY KEY,
     service_name VARCHAR(100) UNIQUE NOT NULL,
@@ -38,7 +41,7 @@ CREATE TABLE IF NOT EXISTS service_registry (
     health_check_url VARCHAR(255),
     status VARCHAR(20) DEFAULT 'unknown', -- 'healthy', 'unhealthy', 'unknown'
     last_health_check TIMESTAMP WITH TIME ZONE,
-    metadata JSONB,
+    metadata JSONB,  -- Maps to 'service_metadata' attribute in ServiceRegistryDB model
     registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

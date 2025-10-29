@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 from aiokafka import AIOKafkaProducer
 
 # Configure logging
@@ -35,13 +36,15 @@ app.add_middleware(
 # Global variables for connections
 redis_client = None
 db_engine = None
-db_session = None
+db_session_factory = None
 kafka_producer = None
+cache_service = None
+notification_service = None
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    global redis_client, db_engine, db_session, kafka_producer
+    global redis_client, db_engine, db_session_factory, kafka_producer, cache_service, notification_service
     
     try:
         # Initialize Redis connection
@@ -63,21 +66,66 @@ async def startup_event():
             max_overflow=5,
             echo=False
         )
-        db_session = sessionmaker(
+        db_session_factory = sessionmaker(
             db_engine, 
             class_=AsyncSession, 
             expire_on_commit=False
         )
+        
+        # Store in app.state for dependency injection
+        app.state.db_session_factory = db_session_factory
+        
         logger.info("Connected to PostgreSQL")
         
-        # Initialize Kafka producer
-        kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
-        kafka_producer = AIOKafkaProducer(
-            bootstrap_servers=kafka_servers,
-            value_serializer=lambda v: str(v).encode('utf-8')
-        )
-        await kafka_producer.start()
-        logger.info("Connected to Kafka")
+        # Initialize Kafka producer (optional - service can run without it)
+        kafka_enabled = os.getenv('KAFKA_ENABLED', 'true').lower() == 'true'
+        kafka_producer = None
+        if kafka_enabled:
+            try:
+                kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+                producer = AIOKafkaProducer(
+                    bootstrap_servers=kafka_servers,
+                    value_serializer=lambda v: str(v).encode('utf-8'),
+                    request_timeout_ms=5000,
+                    api_version='auto'
+                )
+                await asyncio.wait_for(producer.start(), timeout=10.0)
+                kafka_producer = producer
+                logger.info("Connected to Kafka")
+            except asyncio.TimeoutError:
+                logger.warning("Kafka connection timeout - continuing without Kafka notifications")
+                # Clean up the producer if it was created
+                try:
+                    if 'producer' in locals():
+                        await producer.stop()
+                except:
+                    pass
+                kafka_producer = None
+            except Exception as kafka_error:
+                logger.warning(f"Failed to connect to Kafka: {kafka_error} - continuing without Kafka notifications")
+                # Clean up the producer if it was created
+                try:
+                    if 'producer' in locals():
+                        await producer.stop()
+                except:
+                    pass
+                kafka_producer = None
+        else:
+            logger.info("Kafka is disabled - notifications will not be sent")
+        
+        # Initialize services
+        from services.cache_service import CacheService
+        from services.notification_service import NotificationService
+        
+        cache_service = CacheService(redis_client)
+        notification_service = NotificationService(kafka_producer)  # Can be None if Kafka unavailable
+        
+        # Store in app.state for dependency injection
+        app.state.redis_client = redis_client
+        app.state.cache_service = cache_service
+        app.state.notification_service = notification_service
+        
+        logger.info("Initialized services")
         
     except Exception as e:
         logger.error(f"Failed to initialize connections: {e}")
@@ -124,21 +172,22 @@ async def health_check():
         # Check PostgreSQL connectivity
         if db_engine:
             async with db_engine.begin() as conn:
-                await conn.execute("SELECT 1")
+                await conn.execute(text("SELECT 1"))
             postgres_status = "healthy"
         else:
             postgres_status = "unhealthy"
         
-        # Check Kafka connectivity
+        # Check Kafka connectivity (optional - service can work without it)
         if kafka_producer:
             kafka_status = "healthy"
         else:
-            kafka_status = "unhealthy"
+            kafka_status = "disabled"  # Not unhealthy, just disabled
         
+        # Service is healthy if Redis and PostgreSQL are healthy
+        # Kafka is optional for core functionality
         overall_status = "healthy" if all([
             redis_status == "healthy", 
-            postgres_status == "healthy",
-            kafka_status == "healthy"
+            postgres_status == "healthy"
         ]) else "unhealthy"
         
         return {
@@ -169,25 +218,20 @@ async def config_status():
         ]
     }
 
-@app.get("/api/v1/config/{key}")
-async def get_config(key: str, environment: str = "development"):
-    """Get configuration value"""
-    return {"key": key, "environment": environment, "message": "Configuration retrieval - to be implemented"}
+# Import and register routers
+from routers.config_router import config_router
+from routers.feature_flag_router import feature_flag_router
+from routers.service_registry_router import service_registry_router, service_registry_compat_router
 
-@app.post("/api/v1/config")
-async def set_config():
-    """Set configuration value"""
-    return {"message": "Configuration setting - to be implemented"}
+# Register routers
+app.include_router(config_router)
+app.include_router(feature_flag_router)
 
-@app.get("/api/v1/feature-flags")
-async def get_feature_flags():
-    """Get feature flags"""
-    return {"message": "Feature flags retrieval - to be implemented"}
+# Register service registry router with new path
+app.include_router(service_registry_router)
 
-@app.post("/api/v1/feature-flags")
-async def set_feature_flag():
-    """Set feature flag"""
-    return {"message": "Feature flag setting - to be implemented"}
+# Add compatibility alias for service registry at old path
+app.include_router(service_registry_compat_router)
 
 if __name__ == "__main__":
     import uvicorn
